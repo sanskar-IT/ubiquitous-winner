@@ -1,0 +1,1332 @@
+# TerraTriage — Multi-Agent Disaster Damage Assessment Pipeline
+
+## 1. Product Summary
+
+TerraTriage is an AI-assisted disaster damage assessment system that converts pre/post-disaster aerial imagery and structured disaster data into a defensible, auditable damage-severity assessment.
+
+The system combines computer vision, visual question answering, retrieval-augmented generation, structured reasoning, and multi-agent orchestration.
+
+The primary objective is not merely to classify whether an image is damaged. The system must answer:
+
+> **What appears damaged, how severe is the damage, what evidence supports that conclusion, what external disaster/context data corroborates it, and what policy/building-code information is relevant?**
+
+Every material claim must be traceable to either:
+
+1. an image region,
+2. a model prediction,
+3. a retrieved document,
+4. a structured government/meteorological data source,
+5. or an explicitly identified inference.
+
+The pipeline must distinguish observations from interpretations and interpretations from final recommendations.
+
+---
+
+# 2. Problem
+
+Disaster-response and insurance workflows face three practical problems:
+
+### Slow triage
+
+Large numbers of properties may require inspection after hurricanes, floods, wildfires, storms, and similar events. Manual review does not scale efficiently.
+
+### Fragmented evidence
+
+Damage assessment may require combining:
+
+- pre-event imagery,
+- post-event imagery,
+- segmentation/detection outputs,
+- contextual weather information,
+- disaster declarations,
+- building codes,
+- insurance/policy rules,
+- and human-readable explanations.
+
+These sources normally exist independently.
+
+### Weak AI auditability
+
+A model producing:
+
+> “Property has severe damage.”
+
+is insufficient.
+
+A useful system needs to explain:
+
+> “Roof structure was identified as damaged in region `(x1,y1,x2,y2)`. The segmentation model assigns 0.91 confidence to the damaged-region mask. A VQA model detected probable roof collapse. The associated storm declaration indicates the property lies within the affected disaster region. Retrieved policy text indicates that structural roof damage crosses the configured severity threshold. Final assessment: Severe, with 0.87 confidence.”
+
+TerraTriage is designed around that chain of evidence.
+
+---
+
+# 3. Goals
+
+## Primary Goals
+
+### G1 — Multimodal damage assessment
+
+Process pre/post-event imagery and identify relevant physical damage.
+
+### G2 — Evidence-grounded reasoning
+
+Every final severity assessment must contain explicit evidence references.
+
+### G3 — Heterogeneous model orchestration
+
+Demonstrate orchestration across:
+
+- segmentation,
+- object detection,
+- VQA,
+- image captioning,
+- text classification,
+- zero-shot classification,
+- LLM reasoning,
+- document retrieval,
+- external structured APIs.
+
+### G4 — Retrieval-grounded contextualization
+
+Retrieve relevant policy/building-code material and associate it with the observed damage.
+
+### G5 — External event verification
+
+Cross-reference assessments against FEMA/OpenFEMA disaster information and NOAA event information.
+
+### G6 — Reproducible evaluation
+
+Every major pipeline change must be measurable against a fixed evaluation dataset and benchmark.
+
+### G7 — Production-shaped deployment
+
+Provide:
+
+- API service,
+- containerization,
+- configurable model backends,
+- asynchronous/queued inference capability,
+- tracing,
+- structured logging,
+- evaluation scripts,
+- and deployment adapters.
+
+---
+
+# 4. Non-Goals
+
+TerraTriage is not intended to:
+
+- autonomously approve or deny insurance claims;
+- produce legally binding insurance decisions;
+- replace human adjusters;
+- determine exact repair costs;
+- provide engineering certification;
+- guarantee building-code compliance;
+- make unsupported damage predictions when evidence is insufficient.
+
+The product is a decision-support and triage system.
+
+The output should explicitly support human review.
+
+---
+
+# 5. Target Users
+
+## Insurance Claims Analyst
+
+Wants rapid prioritization of properties requiring manual inspection.
+
+## Disaster Response Analyst
+
+Needs regional damage intelligence.
+
+## Claims Adjuster
+
+Needs localized visual evidence and contextual information.
+
+## ML/AI Engineer
+
+Needs observability, evaluation, model swapping, and traceability.
+
+## Engineering/Research Team
+
+Needs a reproducible environment for testing heterogeneous multimodal systems.
+
+---
+
+# 6. Core User Journey
+
+A user submits:
+
+- property/image identifier,
+- pre-event image,
+- post-event image,
+- optional coordinates,
+- disaster/event identifier,
+- optional policy identifier.
+
+TerraTriage executes:
+
+```text
+Input
+  ↓
+Image Validation
+  ↓
+Pre/Post Image Alignment
+  ↓
+Vision Analysis
+  ├── Damage Segmentation
+  ├── Object Detection
+  ├── Image Captioning
+  └── Damage Category Classification
+  ↓
+Region Extraction
+  ↓
+VQA Analysis
+  ↓
+Evidence Aggregation
+  ↓
+External Event Verification
+  ├── FEMA
+  └── NOAA
+  ↓
+Policy / Building-Code Retrieval
+  ↓
+Severity Reasoning
+  ↓
+Consistency / Hallucination Checks
+  ↓
+Final Structured Assessment
+  ↓
+Human-Readable Report
+```
+
+---
+
+# 7. System Architecture
+
+## High-Level Architecture
+
+```text
+                    ┌─────────────────────────┐
+                    │      FastAPI API        │
+                    └────────────┬────────────┘
+                                 │
+                                 ▼
+                    ┌─────────────────────────┐
+                    │   LangGraph Orchestrator│
+                    └────────────┬────────────┘
+                                 │
+          ┌──────────────────────┼──────────────────────┐
+          ▼                      ▼                      ▼
+ ┌────────────────┐     ┌────────────────┐     ┌────────────────┐
+ │ Vision Agent   │     │ Context Agent  │     │ Retrieval Agent│
+ └───────┬────────┘     └───────┬────────┘     └───────┬────────┘
+         │                      │                      │
+         ▼                      ▼                      ▼
+ Segmentation               FEMA API             pgvector
+ Detection                  NOAA API              Policy Docs
+ VQA                        Geo Context           Building Codes
+ Captioning
+         │                      │                      │
+         └──────────────────────┼──────────────────────┘
+                                ▼
+                       ┌──────────────────┐
+                       │ Reasoning Agent  │
+                       └────────┬─────────┘
+                                ▼
+                       ┌──────────────────┐
+                       │ Verification     │
+                       │ / Guardrail Agent│
+                       └────────┬─────────┘
+                                ▼
+                       ┌──────────────────┐
+                       │ Report Generator │
+                       └──────────────────┘
+```
+
+---
+
+# 8. Agent Responsibilities
+
+## 8.1 Orchestrator Agent
+
+Implemented using LangGraph.
+
+Responsibilities:
+
+- maintain workflow state;
+- invoke specialist nodes;
+- determine whether downstream processing is necessary;
+- handle retries;
+- record failures;
+- enforce schema contracts;
+- prevent unsupported claims from reaching the final report.
+
+The orchestrator should NOT perform the actual vision inference itself.
+
+---
+
+# 9. Vision Agent
+
+The Vision Agent is actually a collection of deterministic model nodes rather than one free-form LLM agent.
+
+### Inputs
+
+- pre-event image;
+- post-event image;
+- optional geographic metadata.
+
+### Outputs
+
+```json
+{
+  "regions": [],
+  "objects": [],
+  "damage_categories": [],
+  "captions": [],
+  "confidence": 0.0
+}
+```
+
+## Segmentation
+
+Initial model candidates:
+
+- SegFormer
+- Mask2Former
+
+Purpose:
+
+Identify pixels associated with damage or damaged structural regions.
+
+Metrics:
+
+- IoU
+- Dice/F1
+- precision
+- recall
+
+---
+
+## Object Detection
+
+Initial model candidates:
+
+- DETR-family model
+- YOLO-family model
+
+Detect:
+
+- buildings
+- vehicles
+- debris
+- structural components
+- other relevant disaster objects
+
+Metrics:
+
+- mAP
+- precision
+- recall
+
+---
+
+## VQA
+
+Generate targeted questions from detected regions.
+
+Examples:
+
+```text
+Is the roof visibly collapsed?
+
+Is there major structural damage?
+
+Is standing water visible?
+
+Are structural walls missing?
+
+Is debris covering the property?
+
+Does the post-event image show a material change from the pre-event image?
+```
+
+Output:
+
+```json
+{
+  "question": "...",
+  "answer": "...",
+  "confidence": 0.0,
+  "region_id": "region_003"
+}
+```
+
+---
+
+## Image-to-Text
+
+Generate a concise description for human review.
+
+Caption requirements:
+
+- factual;
+- localized where possible;
+- no unsupported causal claims;
+- explicitly indicate uncertainty.
+
+Bad:
+
+> Hurricane destroyed the entire house.
+
+Good:
+
+> Post-event imagery shows substantial roof displacement and debris surrounding the structure.
+
+---
+
+# 10. Damage Taxonomy
+
+Use a controlled taxonomy.
+
+Example initial taxonomy:
+
+```text
+NO_DAMAGE
+MINOR
+MODERATE
+SEVERE
+DESTROYED
+UNKNOWN
+```
+
+Secondary categories:
+
+```text
+ROOF_DAMAGE
+WALL_DAMAGE
+STRUCTURAL_COLLAPSE
+FLOODING
+DEBRIS
+FIRE_DAMAGE
+VEGETATION_DAMAGE
+VEHICLE_DAMAGE
+UNKNOWN
+```
+
+The taxonomy must be configurable rather than hard-coded into model prompts.
+
+---
+
+# 11. Region-Based Evidence Model
+
+Every important visual conclusion must reference a region.
+
+```json
+{
+  "region_id": "region_017",
+  "bbox": [x1, y1, x2, y2],
+  "mask_reference": "artifacts/masks/region_017.png",
+  "source_image": "post_event_001",
+  "detections": [],
+  "vqa_answers": [],
+  "caption": "...",
+  "confidence": 0.91
+}
+```
+
+This is one of the most important design decisions in the project.
+
+The system should reason about:
+
+```text
+observation → evidence → interpretation
+```
+
+rather than:
+
+```text
+image → LLM → random conclusion
+```
+
+---
+
+# 12. Retrieval Agent
+
+The Retrieval Agent provides contextual information.
+
+Potential corpus:
+
+- FEMA guidance;
+- insurance policy documents;
+- relevant building-code excerpts;
+- disaster-response guidelines.
+
+Technology:
+
+- LlamaIndex
+- PostgreSQL
+- pgvector
+
+Each chunk should retain metadata:
+
+```json
+{
+  "document_id": "...",
+  "title": "...",
+  "source": "...",
+  "section": "...",
+  "jurisdiction": "...",
+  "effective_date": "...",
+  "page": 0
+}
+```
+
+---
+
+# 13. Retrieval Pipeline
+
+```text
+Query
+  ↓
+Metadata filtering
+  ↓
+Hybrid retrieval
+  ├── semantic vector search
+  └── lexical search
+  ↓
+Top-K candidates
+  ↓
+Reranking
+  ↓
+Relevant evidence chunks
+```
+
+The first implementation can use vector retrieval only.
+
+Hybrid retrieval is a later optimization.
+
+---
+
+# 14. Text Classification
+
+A dedicated classifier determines:
+
+> Is this retrieved clause relevant to this damage scenario?
+
+Output:
+
+```json
+{
+  "document_id": "...",
+  "clause_id": "...",
+  "relevance": "HIGH",
+  "confidence": 0.94
+}
+```
+
+This prevents the LLM from blindly using every retrieved paragraph.
+
+---
+
+# 15. Zero-Shot Classification
+
+Used for:
+
+- emerging damage categories;
+- categories absent from the original training taxonomy;
+- disaster-specific phenomena.
+
+Example:
+
+```text
+candidate_labels:
+- roof collapse
+- roof displacement
+- standing water
+- structural fire damage
+- debris accumulation
+- vegetation impact
+```
+
+Zero-shot predictions must remain explicitly marked as lower-confidence/unverified evidence.
+
+---
+
+# 16. External Event Verification
+
+The system should retrieve external structured data when geographic/event information is available.
+
+### FEMA/OpenFEMA
+
+Validate:
+
+- disaster declaration;
+- event type;
+- declaration date;
+- geographic coverage.
+
+### NOAA
+
+Validate:
+
+- storm event type;
+- event date;
+- severity;
+- geographic overlap where available.
+
+The system must not infer:
+
+> “This property was damaged by Hurricane X”
+
+merely because the image looks damaged.
+
+It should instead state something like:
+
+> “The property location falls within the reported geographic scope of event X.”
+
+Causal attribution remains a separate inference.
+
+---
+
+# 17. Severity Reasoning
+
+The Reasoning Agent receives only structured evidence.
+
+Input:
+
+```text
+VISION EVIDENCE
+VQA EVIDENCE
+EVENT EVIDENCE
+RETRIEVED POLICY EVIDENCE
+RETRIEVED CODE EVIDENCE
+```
+
+It produces:
+
+```json
+{
+  "severity": "SEVERE",
+  "confidence": 0.87,
+  "rationale": [],
+  "evidence_refs": [],
+  "uncertainties": [],
+  "recommended_human_review": true
+}
+```
+
+The reasoning prompt must forbid unsupported facts.
+
+---
+
+# 18. Evidence Graph
+
+Represent evidence explicitly.
+
+Example:
+
+```text
+post_image_001
+   │
+   ▼
+region_017
+   │
+   ├── detection: roof
+   ├── segmentation: severe damage
+   └── VQA: probable roof collapse
+              │
+              ▼
+        damage_assessment
+              │
+       ┌──────┴──────┐
+       ▼             ▼
+ FEMA event      Policy clause
+ evidence        evidence
+       │             │
+       └──────┬──────┘
+              ▼
+        final severity
+```
+
+This makes the pipeline inspectable.
+
+---
+
+# 19. Final Output
+
+The API should return both machine-readable and human-readable forms.
+
+Example:
+
+```json
+{
+  "assessment_id": "assessment_001",
+  "property_id": "property_001",
+  "event": {
+    "event_type": "hurricane",
+    "verified": true
+  },
+  "severity": "SEVERE",
+  "confidence": 0.87,
+  "damage_categories": [
+    "ROOF_DAMAGE",
+    "DEBRIS"
+  ],
+  "evidence": [
+    {
+      "type": "image_region",
+      "region_id": "region_017"
+    },
+    {
+      "type": "vqa",
+      "question_id": "q_004"
+    },
+    {
+      "type": "document",
+      "document_id": "policy_23",
+      "chunk_id": "chunk_88"
+    }
+  ],
+  "uncertainties": [
+    "Exact repair cost cannot be determined from imagery."
+  ],
+  "human_review_required": true
+}
+```
+
+---
+
+# 20. Report
+
+The generated report should contain:
+
+## Executive Assessment
+
+- severity;
+- confidence;
+- review priority.
+
+## Visual Evidence
+
+- original image;
+- relevant region overlays;
+- segmentation masks;
+- detection boxes.
+
+## Model Findings
+
+- segmentation;
+- detection;
+- VQA;
+- caption.
+
+## External Validation
+
+- FEMA event;
+- NOAA event;
+- geographic overlap.
+
+## Policy / Code Context
+
+- retrieved clauses;
+- source;
+- section;
+- relevance.
+
+## Uncertainty
+
+Explicitly list what the system cannot establish.
+
+## Audit Trail
+
+Every assertion must have an evidence reference.
+
+---
+
+# 21. Evaluation Harness
+
+This is the core differentiator.
+
+Evaluation must run independently from the production pipeline.
+
+## Dataset
+
+Use xBD/xView2-compatible labeled disaster imagery where licensing/access permits.
+
+Dataset splits:
+
+```text
+train/
+validation/
+test/
+distribution_shift_test/
+```
+
+The test set must never be used for prompt/model tuning.
+
+---
+
+# 22. Evaluation Dimensions
+
+## Vision Metrics
+
+Segmentation:
+
+- IoU
+- Dice
+- precision
+- recall
+
+Detection:
+
+- mAP
+- precision
+- recall
+
+Classification:
+
+- accuracy
+- macro F1
+
+VQA:
+
+- exact/semantic answer accuracy.
+
+---
+
+# 23. RAG Metrics
+
+Measure:
+
+- recall@k;
+- precision@k;
+- MRR;
+- retrieval relevance;
+- citation correctness;
+- faithfulness.
+
+RAGAS can be used where appropriate.
+
+---
+
+# 24. Hallucination Evaluation
+
+A claim is hallucinated when it asserts information unsupported by the available evidence.
+
+Example:
+
+```text
+Claim:
+"The house experienced a complete structural collapse."
+
+Evidence:
+Roof damage only.
+
+Result:
+HALLUCINATION
+```
+
+Claims should be extracted from generated reports and mapped against evidence.
+
+Metrics:
+
+```text
+unsupported_claim_rate
+evidence_coverage
+citation_accuracy
+contradiction_rate
+```
+
+---
+
+# 25. End-to-End Evaluation
+
+Primary benchmark:
+
+```text
+Input dataset
+     ↓
+Full TerraTriage pipeline
+     ↓
+Final structured assessment
+     ↓
+Compare against labeled ground truth
+```
+
+Report:
+
+```text
+Damage classification accuracy
+Severity macro-F1
+Segmentation IoU
+VQA accuracy
+Retrieval precision
+Citation accuracy
+Hallucination rate
+Average latency
+p95 latency
+Cost / assessment
+```
+
+---
+
+# 26. Distribution Shift Evaluation
+
+Create a dedicated distribution-shift benchmark.
+
+Possible dimensions:
+
+- disaster type;
+- geographic region;
+- image resolution;
+- satellite vs aerial imagery;
+- lighting;
+- weather;
+- time between images;
+- unseen damage category.
+
+The goal is to demonstrate that benchmark accuracy does not automatically imply reliable real-world behavior.
+
+---
+
+# 27. Evaluation Gate
+
+A pull request should optionally fail when:
+
+```text
+severity_f1 < baseline
+hallucination_rate > allowed_threshold
+retrieval_precision < threshold
+citation_accuracy < threshold
+latency_p95 > threshold
+```
+
+Example configuration:
+
+```yaml
+quality_gates:
+  min_severity_f1: 0.70
+  max_hallucination_rate: 0.10
+  min_retrieval_precision: 0.75
+  min_citation_accuracy: 0.90
+```
+
+These are configuration examples, not claimed achieved results.
+
+---
+
+# 28. Observability
+
+Use LangSmith or Langfuse.
+
+Every execution should expose:
+
+```text
+trace_id
+assessment_id
+node
+model
+model_version
+input_reference
+output_schema
+latency_ms
+token_usage
+error
+retry_count
+evidence_refs
+```
+
+Trace example:
+
+```text
+Assessment
+ ├── Vision
+ │    ├── Segmentation
+ │    ├── Detection
+ │    ├── Captioning
+ │    └── VQA
+ ├── FEMA
+ ├── NOAA
+ ├── Retrieval
+ │    ├── Search
+ │    └── Rerank
+ ├── Reasoning
+ └── Verification
+```
+
+---
+
+# 29. Model Abstraction
+
+Models must be accessed through interfaces.
+
+Example:
+
+```python
+class SegmentationModel(Protocol):
+    def predict(self, image: Image) -> SegmentationResult:
+        ...
+```
+
+Likewise:
+
+```python
+class DetectionModel
+class VQAModel
+class CaptioningModel
+class EmbeddingModel
+class Reranker
+class LLM
+```
+
+This makes it possible to switch:
+
+```text
+local HF model
+       ↓
+Modal
+       ↓
+Baseten
+       ↓
+Replicate
+```
+
+without rewriting orchestration logic.
+
+---
+
+# 30. Deployment
+
+Primary application components:
+
+```text
+FastAPI
+PostgreSQL
+pgvector
+LangGraph
+Redis / queue layer
+GPU inference service
+Object storage
+Observability backend
+```
+
+Local development should work with Docker Compose.
+
+Production deployment should have provider adapters.
+
+---
+
+# 31. Repository Structure
+
+```text
+terratriage/
+├── apps/
+│   ├── api/
+│   └── worker/
+│
+├── terratriage/
+│   ├── agents/
+│   │   ├── orchestrator.py
+│   │   ├── vision.py
+│   │   ├── retrieval.py
+│   │   ├── verification.py
+│   │   ├── reasoning.py
+│   │   └── reporting.py
+│   │
+│   ├── models/
+│   │   ├── segmentation.py
+│   │   ├── detection.py
+│   │   ├── vqa.py
+│   │   ├── captioning.py
+│   │   └── classification.py
+│   │
+│   ├── retrieval/
+│   ├── integrations/
+│   │   ├── fema.py
+│   │   ├── noaa.py
+│   │   ├── imagery.py
+│   │   └── inference/
+│   │
+│   ├── evaluation/
+│   ├── schemas/
+│   ├── prompts/
+│   ├── config/
+│   └── utils/
+│
+├── data/
+│   ├── raw/
+│   ├── processed/
+│   └── eval/
+│
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   └── evaluation/
+│
+├── notebooks/
+├── scripts/
+├── docs/
+│   ├── architecture.md
+│   ├── evaluation.md
+│   ├── deployment.md
+│   ├── model-card.md
+│   └── decisions/
+│
+├── docker/
+├── docker-compose.yml
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+# 32. Data Contracts
+
+All agent boundaries must use Pydantic models.
+
+Examples:
+
+```text
+ImageAsset
+BoundingBox
+DamageRegion
+DetectionResult
+SegmentationResult
+VQAResult
+RetrievedChunk
+ExternalEvent
+Evidence
+SeverityAssessment
+AssessmentReport
+EvaluationResult
+```
+
+No free-form dictionary should cross major agent boundaries.
+
+---
+
+# 33. Failure Handling
+
+The system must distinguish:
+
+```text
+MODEL_FAILURE
+EXTERNAL_API_FAILURE
+INVALID_IMAGE
+NO_DAMAGE_DETECTED
+INSUFFICIENT_EVIDENCE
+RETRIEVAL_FAILURE
+SCHEMA_VALIDATION_FAILURE
+TIMEOUT
+```
+
+A failed optional subsystem should not automatically destroy the entire assessment.
+
+Example:
+
+If NOAA is unavailable:
+
+```text
+status:
+  NOAA = unavailable
+confidence:
+  unchanged or appropriately reduced
+final report:
+  explicitly states NOAA unavailable
+```
+
+---
+
+# 34. Security / Safety
+
+The system must:
+
+- validate uploaded files;
+- restrict image sizes;
+- sanitize metadata;
+- avoid executing uploaded content;
+- avoid embedding sensitive personal information into logs;
+- never claim legal or insurance certainty;
+- mark all generated assessments as AI-assisted.
+
+---
+
+# 35. Performance Targets
+
+Initial targets are engineering goals, not claimed results.
+
+For a single property:
+
+```text
+p50 end-to-end latency: < 20 seconds
+p95 end-to-end latency: < 60 seconds
+```
+
+The benchmark should separately report:
+
+```text
+vision latency
+retrieval latency
+API latency
+LLM latency
+total latency
+```
+
+Batch processing should support asynchronous jobs.
+
+---
+
+# 36. MVP
+
+The MVP should include exactly this path:
+
+```text
+xBD sample
+   ↓
+damage segmentation
+   ↓
+damage detection
+   ↓
+targeted VQA
+   ↓
+structured evidence
+   ↓
+local policy/document retrieval
+   ↓
+severity reasoning
+   ↓
+citation-backed report
+   ↓
+evaluation
+```
+
+Do NOT begin by implementing every external integration.
+
+---
+
+# 37. Phase 2
+
+Add:
+
+- FEMA integration;
+- NOAA integration;
+- external imagery provider;
+- event/geospatial verification;
+- asynchronous jobs;
+- observability;
+- model provider abstraction.
+
+---
+
+# 38. Phase 3
+
+Add:
+
+- distribution-shift benchmark;
+- deployment to Modal/Baseten;
+- concurrency testing;
+- cost tracking;
+- automated evaluation gates;
+- model comparison dashboard.
+
+---
+
+# 39. Acceptance Criteria
+
+TerraTriage is considered complete when:
+
+### Functional
+
+- accepts pre/post imagery;
+- identifies candidate damage regions;
+- executes multiple vision tasks;
+- generates structured VQA findings;
+- retrieves contextual documents;
+- produces severity assessment;
+- generates evidence-linked report.
+
+### Engineering
+
+- all boundaries have typed schemas;
+- agents are independently testable;
+- models are swappable through interfaces;
+- failed external services are gracefully handled;
+- full traces are available.
+
+### Evaluation
+
+- held-out benchmark exists;
+- baseline metrics are recorded;
+- every evaluation run is reproducible;
+- hallucination metric exists;
+- retrieval metric exists;
+- end-to-end quality metric exists.
+
+### Deployment
+
+- entire application runs with Docker;
+- API is documented;
+- model provider can be configured;
+- production deployment path is documented.
+
+---
+
+# 40. Interview-Level Engineering Questions This Project Should Be Able to Answer
+
+The final repository should make it possible to explain:
+
+### Why LangGraph?
+
+Because the workflow has explicit state, conditional branching, retry semantics, typed handoffs, and heterogeneous tools/models.
+
+### Why not let one multimodal LLM do everything?
+
+Because deterministic vision models provide measurable, task-specific signals and make evaluation and auditability easier.
+
+### Why have VQA after segmentation?
+
+Because region-level questioning can convert a coarse visual signal into targeted evidence.
+
+### Why retrieve policy documents?
+
+Because severity interpretation may depend on external rules rather than visual appearance alone.
+
+### Why not trust RAG?
+
+Because retrieval relevance and answer faithfulness are independently evaluated.
+
+### Why separate evidence from reasoning?
+
+Because a reasoning model should not be allowed to manufacture observations.
+
+### Why use external APIs?
+
+To distinguish visual evidence from real-world event correlation.
+
+### Why is the evaluation harness central?
+
+Because a multimodal agent system without regression testing can improve its demo while silently becoming less reliable.
+
+### What happens when an upstream model changes?
+
+Model versions are recorded, benchmark scores are compared, and quality gates can prevent regressions.
+
+---
+
+# 41. Resume Metrics
+
+Only publish metrics that are actually measured.
+
+Examples:
+
+> Built a multimodal disaster-damage triage pipeline combining segmentation, detection, VQA, RAG, and structured event verification over a held-out disaster imagery benchmark.
+
+> Achieved X IoU / Y macro-F1 / Z% VQA accuracy while reducing unsupported severity claims from A% to B% through evidence-constrained reasoning.
+
+> Deployed heterogeneous vision inference behind a provider-agnostic serving interface and measured p95 end-to-end latency of X seconds at Y concurrent requests.
+
+Never fabricate X/Y/Z values merely to make the resume stronger.

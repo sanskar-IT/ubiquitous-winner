@@ -1,0 +1,70 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - TERRATRIAGE_ENVIRONMENT=development
+      - TERRATRIAGE_DB_HOST=postgres
+      - TERRATRIAGE_REDIS_HOST=redis
+      - TERRATRIAGE_FEMA_USE_FIXTURES=true
+      - TERRATRIAGE_NOAA_USE_FIXTURES=true
+      - TERRATRIAGE_OBS_PROVIDER=none
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build: .
+    environment:
+      - TERRATRIAGE_ENVIRONMENT=development
+      - TERRATRIAGE_DB_HOST=postgres
+      - TERRATRIAGE_REDIS_HOST=redis
+      - TERRATRIAGE_FEMA_USE_FIXTURES=true
+      - TERRATRIAGE_NOAA_USE_FIXTURES=true
+    depends_on:
+      - postgres
+      - redis
+      - api
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+    command: python -m apps.worker.main
+
+  postgres:
+    image: ankane/pgvector:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: terratriage
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redisdata:
